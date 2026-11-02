@@ -1,3 +1,13 @@
-This is the content repository for the mcxtrace.org webpage - and nothing else
-The website is handled by git. Pushing should should trigger the update update commands run at the server.
+Hi there,
+
+This is the basis of the mcxtrace websites at 
+
+https://www.mcxtrace.org and https://mccode-dev.github.io/mcxtrace.org.web/
+
+In this folder there are 
+
+* contents/ - website contents, html files are wrapped in Apache SSI .shtml files by createweb.pl
+* layout/ - layout stuff for the page, header.html and footer.html starts/ends each webpage, graphics
+* specialcontents/ - "other" webpages, i.e. html/and other stuff not to be parsed by createweb.pl,
+                    but to be copied directly to the webserver's DocumentRoot
 
