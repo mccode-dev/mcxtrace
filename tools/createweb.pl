@@ -614,7 +614,9 @@ sub resolvessi {
     sub ssi {
 	my ($s, $dir) = @_;
 	$s =~ s{<!--#include\s+(?:virtual|file)="([^"]*)"\s*-->}{my $p = ssipath($1, $dir); ssi(slurp($p), dirname($p))}ge;
-	$s =~ s{<!--#exec\s+cmd="test -f (\S+) && cat \S+"\s*-->}{ssi(slurp("$dir/$1"), $dir)}ge;
+	# list.html is normally a makelists() link list; in a dir named "list"
+	# it is that dir's own SSI-wrapped page, which must not be pulled in
+	$s =~ s{<!--#exec\s+cmd="test -f (\S+) && cat \S+"\s*-->}{my $l = slurp("$dir/$1"); $l =~ m/<!--#/ ? "" : $l}ge;
 	$s =~ s{<!--#flastmod\s+(?:virtual|file)="([^"]*)"\s*-->}{lastmod(ssipath($1, $dir))}ge;
 	$s =~ s{<!--#(?:config|endif)[^>]*-->}{}g;
 	return $s;
