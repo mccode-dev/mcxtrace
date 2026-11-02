@@ -1,27 +1,63 @@
 name: pages
 
 # Static build of the website for GitHub Pages, replacing the server-side
-# post-merge hook (createweb.pl + Apache SSI).
+# post-merge hook (createweb.pl + Apache SSI). Component docs, manual PDFs
+# and the current version follow the latest McCode release (its
+# <flavor>-debian-x86_64.tgz asset); hourly runs rebuild once a new release
+# has that asset attached.
 on:
   push:
     branches: [master, gh-pages-draft]
   workflow_dispatch:
+  schedule:
+    - cron: '41 * * * *'
 
 permissions:
-  contents: read
+  contents: write  # sync commit (version, manual PDFs)
   pages: write
   id-token: write
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   FLAVOR: mcxtrace  # mcstas | mcxtrace
+  GH_TOKEN: ${{ github.token }}
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.latest.outputs.tag }}
+      build: ${{ steps.latest.outputs.build }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: contents/download/current
+          sparse-checkout-cone-mode: false
+
+      - id: latest
+        run: |
+          set -eu
+          # newest published release with the Debian archive attached
+          tag=$(for t in $(gh release list -R mccode-dev/McCode --exclude-drafts --exclude-pre-releases -L 5 --json tagName -q '.[].tagName'); do
+                  gh release view $t -R mccode-dev/McCode --json assets -q '.assets[].name' | grep -qx "$FLAVOR-debian-x86_64.tgz" && { echo $t; break; }
+                done)
+          [ -n "$tag" ] || { echo "::error::no McCode release with $FLAVOR-debian-x86_64.tgz"; exit 1; }
+          cur=$(cat contents/download/current 2>/dev/null || true)
+          build=true
+          [ "$GITHUB_EVENT_NAME" = schedule ] && [ "v$cur" = "$tag" ] && build=false
+          echo "latest release $tag, site at ${cur:-?}, build=$build"
+          echo "tag=$tag" >> $GITHUB_OUTPUT
+          echo "build=$build" >> $GITHUB_OUTPUT
+
+  build:
+    needs: release
+    if: needs.release.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.release.outputs.tag }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -31,33 +67,53 @@ jobs:
       - id: pages
         uses: actions/configure-pages@v5
 
+      # The release .debs unpacked (not installed) under $ROOT; the tools are
+      # relocatable, so mcdoc runs from there
+      - name: Release packages
+        run: |
+          set -eu
+          gh release download $TAG -R mccode-dev/McCode -p "$FLAVOR-debian-x86_64.tgz" -D $RUNNER_TEMP
+          mkdir $RUNNER_TEMP/debs $RUNNER_TEMP/root
+          tar xzf $RUNNER_TEMP/$FLAVOR-debian-x86_64.tgz -C $RUNNER_TEMP/debs --strip-components=1 --wildcards "*/$FLAVOR-*.deb"
+          for d in $RUNNER_TEMP/debs/*.deb; do dpkg-deb -x $d $RUNNER_TEMP/root; done
+          echo "ROOT=$RUNNER_TEMP/root" >> $GITHUB_ENV
+          echo "VER=${TAG#v}" >> $GITHUB_ENV
+
+      - name: Sync version and manual PDFs with the release
+        run: |
+          set -eu
+          doc=$ROOT/usr/share/doc/$FLAVOR
+          echo $VER > contents/download/current
+          cp $doc/mcxtrace-manual.pdf contents/documentation/manual/manual_$VER.pdf
+          cp $doc/mcxtrace-components.pdf contents/documentation/manual/component_manual_$VER.pdf
+          git add -A contents
+          if ! git diff --cached --quiet; then
+            git diff --cached --stat
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -qm "Sync with McCode $TAG: version, manual PDFs"
+            git push origin HEAD:$GITHUB_REF_NAME
+          fi
+
       - name: Manual page
         working-directory: contents/documentation/manual
         run: |
           { cat header; for f in $(ls *.pdf | sort -rV); do echo "<li><a href=\"$f\">$f</a>"; done; cat footer; } > manual.html
 
-      - uses: mamba-org/setup-micromamba@v2
-        with:
-          environment-name: mccode
-          create-args: ${{ env.FLAVOR }}-core
-          condarc: |
-            channels: [conda-forge]
-
       # Into contents/ before createweb, so the pages get the site header/menu
       # and the root links below get the URL prefix
       - name: Component docs (mxdoc)
-        shell: bash -el {0}
         run: |
-          mxdoc -i > /dev/null
-          ver=$(basename "$CONDA_PREFIX"/conda-meta/${FLAVOR}-core-*.json | cut -d- -f3)
+          set -eu
+          $ROOT/usr/bin/mxdoc -i > /dev/null
           out=contents/download/components/current
-          mkdir -p $out && cp -R "$CONDA_PREFIX/share/doc/$FLAVOR"/. $out/
+          mkdir -p $out && cp -R "$ROOT/usr/share/doc/$FLAVOR"/. $out/
           touch $out/hide  # keep "current" out of the createweb link list
-          grep -rl "$CONDA_PREFIX" $out --include='*.html' | xargs -r sed -i -E \
-            -e "s#(file://)?$CONDA_PREFIX/share/doc/$FLAVOR#/download/components/current#g" \
-            -e "s#(file://)?$CONDA_PREFIX/share/$FLAVOR/resources#https://github.com/mccode-dev/McCode/tree/v$ver/$FLAVOR-comps#g"
+          grep -rl "$ROOT" $out --include='*.html' | xargs -r sed -i -E \
+            -e "s#(file://)?$ROOT/usr/share/doc/$FLAVOR#/download/components/current#g" \
+            -e "s#(file://)?$ROOT/usr/share/$FLAVOR/resources#https://github.com/mccode-dev/McCode/tree/$TAG/$FLAVOR-comps#g"
           cp $out/mxdoc.html $out/current.html  # createweb: dir page = <dir>/<dir>.html
-          echo "mxdoc for $FLAVOR $ver: $(du -sh $out | cut -f1)"
+          echo "mxdoc for $FLAVOR $VER: $(du -sh $out | cut -f1)"
 
       - name: Build site
         run: perl tools/createweb.pl -c contents -s specialcontents -l layout -w _site -p "${{ steps.pages.outputs.base_path }}"
