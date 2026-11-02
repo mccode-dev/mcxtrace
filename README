@@ -1,3 +1,9 @@
 This is the content repository for the mcxtrace.org webpage - and nothing else
 The website is handled by git. Pushing should should trigger the update update commands run at the server.
 
+
+GitHub Pages: .github/workflows/pages.yml builds the same site statically with
+tools/createweb.pl (a copy of geekclubdk/createweb, patched to inline the SSI
+directives and to prefix root links for project-page hosting), and adds the
+mxdoc component docs from the latest conda-forge mcxtrace-core under
+/download/components/current.

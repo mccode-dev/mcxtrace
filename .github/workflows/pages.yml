@@ -1,0 +1,75 @@
+name: pages
+
+# Static build of the website for GitHub Pages, replacing the server-side
+# post-merge hook (createweb.pl + Apache SSI).
+on:
+  push:
+    branches: [master, gh-pages-draft]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  FLAVOR: mcxtrace  # mcstas | mcxtrace
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0     # full history for the "Last Modified" dates...
+          filter: blob:none  # ...without downloading old file versions
+
+      - id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Manual page
+        working-directory: contents/documentation/manual
+        run: |
+          { cat header; for f in $(ls *.pdf | sort -rV); do echo "<li><a href=\"$f\">$f</a>"; done; cat footer; } > manual.html
+
+      - name: Build site
+        run: perl tools/createweb.pl -c contents -s specialcontents -l layout -w _site -p "${{ steps.pages.outputs.base_path }}"
+
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: mccode
+          create-args: ${{ env.FLAVOR }}-core
+          condarc: |
+            channels: [conda-forge]
+
+      - name: Component docs (mxdoc)
+        shell: bash -el {0}
+        env:
+          BASE: ${{ steps.pages.outputs.base_path }}
+        run: |
+          mxdoc -i > /dev/null
+          ver=$(basename "$CONDA_PREFIX"/conda-meta/${FLAVOR}-core-*.json | cut -d- -f3)
+          out=_site/download/components/current
+          mkdir -p $out && cp -R "$CONDA_PREFIX/share/doc/$FLAVOR"/. $out/
+          grep -rl 'file://' $out --include='*.html' | xargs -r sed -i \
+            -e "s#file://$CONDA_PREFIX/share/doc/$FLAVOR#$BASE/download/components/current#g" \
+            -e "s#file://$CONDA_PREFIX/share/$FLAVOR/resources#https://github.com/mccode-dev/McCode/tree/v$ver/$FLAVOR-comps#g"
+          echo "mxdoc for $FLAVOR $ver: $(du -sh $out | cut -f1)"
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
