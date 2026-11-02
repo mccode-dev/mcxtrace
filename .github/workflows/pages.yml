@@ -67,22 +67,29 @@ jobs:
       - id: pages
         uses: actions/configure-pages@v5
 
-      # The release .debs unpacked (not installed) under $ROOT; the tools are
-      # relocatable, so mcdoc runs from there
-      - name: Release packages
+      # Install the release's own .debs, as users do (dependencies such as
+      # cif2hkl from https://mccode-dev.github.io/debian/), so mxdoc and the
+      # docs in /usr/share/doc/$FLAVOR are exactly those of the release
+      - name: Install release packages
         run: |
           set -eu
+          sudo wget -qO /usr/share/keyrings/mccode-apt.gpg https://mccode-dev.github.io/debian/mccode-apt.gpg
+          sudo wget -qO /etc/apt/sources.list.d/mccode.sources https://mccode-dev.github.io/debian/mccode.sources
+          sudo apt-get update -qq
           gh release download $TAG -R mccode-dev/McCode -p "$FLAVOR-debian-x86_64.tgz" -D $RUNNER_TEMP
-          mkdir $RUNNER_TEMP/debs $RUNNER_TEMP/root
-          tar xzf $RUNNER_TEMP/$FLAVOR-debian-x86_64.tgz -C $RUNNER_TEMP/debs --strip-components=1 --wildcards "*/$FLAVOR-*.deb"
-          for d in $RUNNER_TEMP/debs/*.deb; do dpkg-deb -x $d $RUNNER_TEMP/root; done
-          echo "ROOT=$RUNNER_TEMP/root" >> $GITHUB_ENV
+          mkdir $RUNNER_TEMP/debs
+          tar xzf $RUNNER_TEMP/$FLAVOR-debian-x86_64.tgz -C $RUNNER_TEMP/debs --strip-components=1 --wildcards '*.deb'
+          cd $RUNNER_TEMP/debs
+          shopt -s nullglob
+          sudo apt-get install -y -qq --no-install-recommends ./$FLAVOR-[0-9]*.deb ./$FLAVOR-comps-*.deb ./$FLAVOR-manuals-*.deb \
+            ./$FLAVOR-tools-python-mccodelib-*.deb ./$FLAVOR-tools-python-mxdoc-*.deb ./MCPL-*.deb ./NCrystal-*.deb > /dev/null
+          dpkg -l "$FLAVOR*" | grep ^ii | awk '{print $2, $3}'
           echo "VER=${TAG#v}" >> $GITHUB_ENV
 
       - name: Sync version and manual PDFs with the release
         run: |
           set -eu
-          doc=$ROOT/usr/share/doc/$FLAVOR
+          doc=/usr/share/doc/$FLAVOR
           echo $VER > contents/download/current
           cp $doc/mcxtrace-manual.pdf contents/documentation/manual/manual_$VER.pdf
           cp $doc/mcxtrace-components.pdf contents/documentation/manual/component_manual_$VER.pdf
@@ -105,13 +112,13 @@ jobs:
       - name: Component docs (mxdoc)
         run: |
           set -eu
-          $ROOT/usr/bin/mxdoc -i > /dev/null
+          sudo mxdoc -i > /dev/null
           out=contents/download/components/current
-          mkdir -p $out && cp -R "$ROOT/usr/share/doc/$FLAVOR"/. $out/
+          mkdir -p $out && cp -R /usr/share/doc/$FLAVOR/. $out/
           touch $out/hide  # keep "current" out of the createweb link list
-          grep -rl "$ROOT" $out --include='*.html' | xargs -r sed -i -E \
-            -e "s#(file://)?$ROOT/usr/share/doc/$FLAVOR#/download/components/current#g" \
-            -e "s#(file://)?$ROOT/usr/share/$FLAVOR/resources#https://github.com/mccode-dev/McCode/tree/$TAG/$FLAVOR-comps#g"
+          grep -rl /usr/share/ $out --include='*.html' | xargs -r sed -i -E \
+            -e "s#(file://)?/usr/share/doc/$FLAVOR#/download/components/current#g" \
+            -e "s#(file://)?/usr/share/$FLAVOR/resources#https://github.com/mccode-dev/McCode/tree/$TAG/$FLAVOR-comps#g"
           cp $out/mxdoc.html $out/current.html  # createweb: dir page = <dir>/<dir>.html
           echo "mxdoc for $FLAVOR $VER: $(du -sh $out | cut -f1)"
 
