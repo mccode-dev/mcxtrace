@@ -580,7 +580,7 @@ sub makelists {
 
 # Local patch for static hosting (GitHub Pages): no Apache SSI there, so
 # inline the SSI directives into every .html file and put the URL prefix
-# (-p, e.g. "/mcstas.org.web" for a project page, "" for a custom domain)
+# (-p, e.g. "/mcstas" for a project page, "" for a custom domain)
 # in front of root-absolute links.
 sub resolvessi {
     use File::Find;
