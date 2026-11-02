@@ -36,9 +36,6 @@ jobs:
         run: |
           { cat header; for f in $(ls *.pdf | sort -rV); do echo "<li><a href=\"$f\">$f</a>"; done; cat footer; } > manual.html
 
-      - name: Build site
-        run: perl tools/createweb.pl -c contents -s specialcontents -l layout -w _site -p "${{ steps.pages.outputs.base_path }}"
-
       - uses: mamba-org/setup-micromamba@v2
         with:
           environment-name: mccode
@@ -46,19 +43,22 @@ jobs:
           condarc: |
             channels: [conda-forge]
 
+      # Into contents/ before createweb, so the pages get the site header/menu
+      # and the root links below get the URL prefix
       - name: Component docs (mxdoc)
         shell: bash -el {0}
-        env:
-          BASE: ${{ steps.pages.outputs.base_path }}
         run: |
           mxdoc -i > /dev/null
           ver=$(basename "$CONDA_PREFIX"/conda-meta/${FLAVOR}-core-*.json | cut -d- -f3)
-          out=_site/download/components/current
+          out=contents/download/components/current
           mkdir -p $out && cp -R "$CONDA_PREFIX/share/doc/$FLAVOR"/. $out/
-          grep -rl 'file://' $out --include='*.html' | xargs -r sed -i \
-            -e "s#file://$CONDA_PREFIX/share/doc/$FLAVOR#$BASE/download/components/current#g" \
-            -e "s#file://$CONDA_PREFIX/share/$FLAVOR/resources#https://github.com/mccode-dev/McCode/tree/v$ver/$FLAVOR-comps#g"
+          grep -rl "$CONDA_PREFIX" $out --include='*.html' | xargs -r sed -i -E \
+            -e "s#(file://)?$CONDA_PREFIX/share/doc/$FLAVOR#/download/components/current#g" \
+            -e "s#(file://)?$CONDA_PREFIX/share/$FLAVOR/resources#https://github.com/mccode-dev/McCode/tree/v$ver/$FLAVOR-comps#g"
           echo "mxdoc for $FLAVOR $ver: $(du -sh $out | cut -f1)"
+
+      - name: Build site
+        run: perl tools/createweb.pl -c contents -s specialcontents -l layout -w _site -p "${{ steps.pages.outputs.base_path }}"
 
       - uses: actions/upload-pages-artifact@v4
         with:
