@@ -16,6 +16,7 @@ permissions:
   contents: write  # sync commit (version, manual PDFs)
   pages: write
   id-token: write
+  actions: write   # keepalive
 
 concurrency:
   group: pages
@@ -51,6 +52,12 @@ jobs:
           echo "latest release $tag, site at ${cur:-?}, build=$build"
           echo "tag=$tag" >> $GITHUB_OUTPUT
           echo "build=$build" >> $GITHUB_OUTPUT
+
+      # GitHub disables a schedule after 60 days without repository activity, and
+      # these runs commit only when a release arrives; re-enabling resets the clock
+      - name: Keep the schedule alive
+        if: github.event_name == 'schedule'
+        run: gh api -X PUT repos/${{ github.repository }}/actions/workflows/pages.yml/enable
 
   build:
     needs: release
